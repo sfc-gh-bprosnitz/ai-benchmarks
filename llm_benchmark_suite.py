@@ -72,10 +72,7 @@ parser.add_argument(
 
 
 def _dict_to_argv(d: Dict[str, Any]) -> List[str]:
-    return [
-        f"--{k.replace('_', '-')}" + (f"={v}" if v or v == 0 else "")
-        for k, v in d.items()
-    ]
+    return [f"--{k.replace('_', '-')}" + (f"={v}" if v or v == 0 else "") for k, v in d.items()]
 
 
 class _Llm:
@@ -197,7 +194,28 @@ class _TogetherLlm(_Llm):
         )
 
 
+class _SnowflakeLlm(_Llm):
+    """See https://docs.together.ai/docs/inference-models"""
+
+    def __init__(self, model: str, display_model: Optional[str] = None):
+        account = os.getenv("SNOWFLAKE_ACCOUNT")
+        super().__init__(
+            model,
+            "snowflake/" + (display_model or model),
+            auth_token=os.getenv("SNOWFLAKE_AUTH_TOKEN"),
+            base_url=f"https://{account}.snowflakecomputing.com/api/v2/cortex/inference/complete",
+        )
+
+
 def _text_models():
+    return [
+        _SnowflakeLlm(LLAMA_3_70B_CHAT),
+        _SnowflakeLlm(LLAMA_3_8B_CHAT),
+        _SnowflakeLlm(MIXTRAL_8X7B_INSTRUCT),
+    ]
+
+
+def _text_models_old():
     AZURE_EASTUS2_OPENAI_API_KEY = os.getenv("AZURE_EASTUS2_OPENAI_API_KEY")
     return [
         # GPT-4
@@ -259,26 +277,20 @@ def _text_models():
         #    base_url="https://fixie-mistral-serverless.eastus2.inference.ai.azure.com/v1",
         # ),
         _AnyscaleLlm("mistralai/Mixtral-8x22B-Instruct-v0.1", MIXTRAL_8X22B_INSTRUCT),
-        _FireworksLlm(
-            "accounts/fireworks/models/mixtral-8x22b-instruct", MIXTRAL_8X22B_INSTRUCT
-        ),
+        _FireworksLlm("accounts/fireworks/models/mixtral-8x22b-instruct", MIXTRAL_8X22B_INSTRUCT),
         _OctoLlm("mixtral-8x22b-instruct", MIXTRAL_8X22B_INSTRUCT),
         _TogetherLlm("mistralai/Mixtral-8x22B-Instruct-v0.1", MIXTRAL_8X22B_INSTRUCT),
         # Mistral 8x7b
         _AnyscaleLlm("mistralai/Mixtral-8x7B-Instruct-v0.1", MIXTRAL_8X7B_INSTRUCT),
         _DatabricksLlm("databricks-mixtral-8x7b-instruct", MIXTRAL_8X7B_INSTRUCT),
-        _FireworksLlm(
-            "accounts/fireworks/models/mixtral-8x7b-instruct", MIXTRAL_8X7B_INSTRUCT
-        ),
+        _FireworksLlm("accounts/fireworks/models/mixtral-8x7b-instruct", MIXTRAL_8X7B_INSTRUCT),
         _GroqLlm("mixtral-8x7b-32768", MIXTRAL_8X7B_INSTRUCT),
         _OctoLlm("mixtral-8x7b-instruct", MIXTRAL_8X7B_INSTRUCT),
         _TogetherLlm("mistralai/Mixtral-8x7B-Instruct-v0.1", MIXTRAL_8X7B_INSTRUCT),
         # Llama 3 70b
         _AnyscaleLlm("meta-llama/Llama-3-70b-chat-hf", LLAMA_3_70B_CHAT),
         _DatabricksLlm("databricks-meta-llama-3-70b-instruct", LLAMA_3_70B_CHAT),
-        _FireworksLlm(
-            "accounts/fireworks/models/llama-v3-70b-instruct", LLAMA_3_70B_CHAT
-        ),
+        _FireworksLlm("accounts/fireworks/models/llama-v3-70b-instruct", LLAMA_3_70B_CHAT),
         _GroqLlm("llama3-70b-8192", LLAMA_3_70B_CHAT),
         _OctoLlm("meta-llama-3-70b-instruct", LLAMA_3_70B_CHAT),
         _PerplexityLlm("llama-3-70b-instruct", LLAMA_3_70B_CHAT),
@@ -286,9 +298,7 @@ def _text_models():
         # Llama 3 8b
         _AnyscaleLlm("meta-llama/Llama-3-8b-chat-hf", LLAMA_3_8B_CHAT),
         _CloudflareLlm("@cf/meta/llama-3-8b-instruct", LLAMA_3_8B_CHAT),
-        _FireworksLlm(
-            "accounts/fireworks/models/llama-v3-8b-instruct", LLAMA_3_8B_CHAT
-        ),
+        _FireworksLlm("accounts/fireworks/models/llama-v3-8b-instruct", LLAMA_3_8B_CHAT),
         _GroqLlm("llama3-8b-8192", LLAMA_3_8B_CHAT),
         _OctoLlm("meta-llama-3-8b-instruct", LLAMA_3_8B_CHAT),
         _PerplexityLlm("llama-3-8b-instruct", LLAMA_3_8B_CHAT),
@@ -367,9 +377,7 @@ class _Response(dataclasses_json.DataClassJsonMixin):
     results: List[llm_request.ApiMetrics]
 
 
-def _format_response(
-    response: _Response, format: str, dlen: int = 0
-) -> Tuple[str, str]:
+def _format_response(response: _Response, format: str, dlen: int = 0) -> Tuple[str, str]:
     if format == "json":
         return response.to_json(indent=2), "application/json"
     else:

@@ -78,6 +78,20 @@ parser.add_argument(
     help="API key for the LLM API endpoint",
 )
 parser.add_argument(
+    "--snowflake-use-jwt",
+    "-suj",
+    type=bool,
+    default=None,
+    help="Enable JWT header",
+)
+parser.add_argument(
+    "--auth-token",
+    "-atat",
+    type=str,
+    default=None,
+    help="Auth token",
+)
+parser.add_argument(
     "--no-warmup",
     action="store_false",
     dest="warmup",
@@ -128,10 +142,7 @@ async def main(args: argparse.Namespace):
     timeout = aiohttp.ClientTimeout(total=args.timeout)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         init_ctx = llm_request.make_context(session, -1, args)
-        contexts = [
-            llm_request.make_context(session, i, args, args.prompt, files)
-            for i in range(args.num_requests)
-        ]
+        contexts = [llm_request.make_context(session, i, args, args.prompt, files) for i in range(args.num_requests)]
         chosen = None
 
         if args.warmup:

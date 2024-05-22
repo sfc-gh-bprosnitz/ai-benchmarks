@@ -140,6 +140,7 @@ def get_api_key(ctx: ApiContext, env_var: str) -> str:
 
 
 def make_headers(
+    snowflake_use_jwt: Optional[bool] = None,
     auth_token: Optional[str] = None,
     api_key: Optional[str] = None,
     x_api_key: Optional[str] = None,
@@ -284,9 +285,7 @@ async def anthropic_chat(ctx: ApiContext) -> ApiResult:
         "anthropic-version": "2023-06-01",
         "anthropic-beta": "messages-2023-12-15",
     }
-    data = make_openai_chat_body(
-        ctx, messages=make_anthropic_messages(ctx.prompt, ctx.files)
-    )
+    data = make_openai_chat_body(ctx, messages=make_anthropic_messages(ctx.prompt, ctx.files))
     return await post(ctx, url, headers, data, chunk_gen)
 
 
@@ -317,9 +316,7 @@ async def cloudflare_chat(ctx: ApiContext) -> ApiResult:
             yield chunk["response"]
 
     account_id = os.environ["CF_ACCOUNT_ID"]
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{ctx.model}"
-    )
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{ctx.model}"
     headers = make_headers(auth_token=get_api_key(ctx, "CF_API_KEY"))
     data = make_openai_chat_body(ctx, messages=make_openai_messages(ctx))
     return await post(ctx, url, headers, data, chunk_gen)
@@ -369,9 +366,7 @@ def make_google_url_and_headers(ctx: ApiContext, method: str):
 def make_gemini_messages(prompt: str, files: List[InputFile]):
     parts: List[Dict[str, Any]] = [{"text": prompt}]
     for file in files:
-        parts.append(
-            {"inline_data": {"mime_type": file.mime_type, "data": file.base64_data}}
-        )
+        parts.append({"inline_data": {"mime_type": file.mime_type, "data": file.base64_data}})
 
     return [{"role": "user", "parts": parts}]
 
@@ -413,10 +408,7 @@ async def gemini_chat(ctx: ApiContext) -> ApiResult:
             "temperature": ctx.temperature,
             "maxOutputTokens": ctx.max_tokens,
         },
-        "safetySettings": [
-            {"category": category, "threshold": "BLOCK_NONE"}
-            for category in harm_categories
-        ],
+        "safetySettings": [{"category": category, "threshold": "BLOCK_NONE"} for category in harm_categories],
     }
     return await post(ctx, url, headers, data, chunk_gen)
 
@@ -438,11 +430,7 @@ async def make_fixie_chunk_gen(response) -> TokenGenerator:
         line = line.decode("utf-8").strip()
         obj = json.loads(line)
         curr_turn = obj["turns"][-1]
-        if (
-            curr_turn["role"] == "assistant"
-            and curr_turn["messages"]
-            and "content" in curr_turn["messages"][-1]
-        ):
+        if curr_turn["role"] == "assistant" and curr_turn["messages"] and "content" in curr_turn["messages"][-1]:
             if curr_turn["state"] == "done":
                 break
             new_text = curr_turn["messages"][-1]["content"]
@@ -462,6 +450,38 @@ async def fixie_chat(ctx: ApiContext) -> ApiResult:
     headers = make_headers(auth_token=get_api_key(ctx, "FIXIE_API_KEY"))
     data = {"message": ctx.prompt, "runtimeParameters": {}}
     return await post(ctx, url, headers, data, make_fixie_chunk_gen)
+
+
+async def make_snowflake_chunk_gen(response) -> TokenGenerator:
+    async for line in response.content:
+
+        if line.startswith(b"data:"):
+            data = json.loads(line[len("data:") :].strip())
+            content = data.get("choices", [{}])[0].get("delta", {}).get("content")
+            if content:
+                yield content
+
+
+async def snowflake_chat(ctx: ApiContext) -> ApiResult:
+    account = os.getenv("SNOWFLAKE_ACCOUNT")
+    url = f"https://{account}.snowflakecomputing.com/api/v2/cortex/inference/complete"
+    headers = make_headers(auth_token=get_api_key(ctx, "SNOWFLAKE_AUTH_TOKEN"))
+    headers["X-Snowflake-Authorization-Token-Type"] = "KEYPAIR_JWT"
+    model = ctx.model
+    model_name_replacement = {
+        "llama-3-8b-chat": "llama3-8b",
+        "llama-3-70b-chat": "llama3-70b",
+        "mixtral-8x7b-instruct": "mixtral-8x7b",
+    }
+    replacement = model_name_replacement[model]
+    if replacement is not None:
+        model = replacement
+    data = {
+        "model": model,
+        "messages": [{"content": ctx.prompt}],
+        "stream": True,
+    }
+    return await post(ctx, url, headers, data, make_snowflake_chunk_gen)
 
 
 async def fake_chat(ctx: ApiContext) -> ApiResult:
@@ -558,9 +578,13 @@ def make_context(
         case "fake":
             provider = "test"
             func = fake_chat
-        case _ if args.base_url or model.startswith("gpt-") or model.startswith(
-            "ft:gpt-"
-        ):
+        case "llama":
+            provider = "snowflake"
+            func = snowflake_chat
+        case "mixtral":
+            provider = "snowflake"
+            func = snowflake_chat
+        case _ if args.base_url or model.startswith("gpt-") or model.startswith("ft:gpt-"):
             func = openai_chat
             if not args.base_url:
                 provider = "openai"
